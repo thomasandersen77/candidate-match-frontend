@@ -47,7 +47,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@vv4
+        uses: actions/checkout@v4
         with:
           # We need to check out the specific PR branch
           ref: ${{ github.event.pull_request.head.sha }}
@@ -77,11 +77,33 @@ jobs:
         uses: google-github-actions/run-gcloud@v2
         with:
           command: |
+            # Read the prompt template from the file
+            PROMPT_TEMPLATE=$(cat pr_review_prompt.txt)
+            # Get the diff from the previous step's output
+            DIFF='${{ steps.pr_diff.outputs.diff }}'
+
+            # Replace the {diff} placeholder with the actual diff content
+            PROMPT="${PROMPT_TEMPLATE//\{diff\}/}"
+            PROMPT+="$DIFF"
+
+            # Use jq to safely construct the JSON payload for the Gemini API
+            JSON_PAYLOAD=$(jq -n --arg prompt "$PROMPT" \
+              '{
+                "contents": [
+                  {
+                    "role": "user",
+                    "parts": [ { "text": $prompt } ]
+                  }
+                ],
+                "generation_config": {
+                  "temperature": 0.2,
+                  "top_p": 0.95,
+                  "top_k": 40
+                }
+              }')
+
+            # Call the model via gcloud, piping the JSON payload to stdin
             gcloud ai models predict gemini-1.5-flash-001 \
               --project=${{ secrets.GCP_PROJECT_ID }} \
               --location=us-central1 \
-              --json-request=-
-        env:
-          # The prompt for the frontend review
-          PROMPT: |
-            You are an expert frontend developer with deep knowledge of React, TypeScript, and modern web development best practices.
+              --json-request=- <<< "$JSON_PAYLOAD"
