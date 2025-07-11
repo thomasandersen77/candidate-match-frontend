@@ -6,8 +6,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: true, // Required for Docker container port mapping
-    strictPort: true,
-    port: 5173,
+    port: 5174,
     watch: {
       usePolling: true, // Helps with file change detection in Docker
     },
