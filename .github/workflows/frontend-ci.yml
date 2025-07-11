@@ -64,9 +64,9 @@ jobs:
           echo "$diff_output" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: Authenticate to Google Cloud
+      - name: Authenticate to Google Cloud  
         id: auth
-        uses: google-github-actions/run-gcloud@v1
+        uses: google-github-actions/auth@v1
         with:
           # Add your Workload Identity Federation credentials here
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -87,7 +87,7 @@ jobs:
             PROMPT="${PROMPT_TEMPLATE//\{diff\}/}"
             PROMPT+="$DIFF"
 
-            # Use jq to safely construct the JSON payload for the Gemini API
+            # Use jq to safely construct the JSON payload   for the Gemini API
             JSON_PAYLOAD=$(jq -n --arg prompt "$PROMPT" \
               '{
                 "contents": [
