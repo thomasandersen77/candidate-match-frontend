@@ -1,5 +1,4 @@
 # .github/workflows/frontend-ci.yml
-
 name: Frontend CI
 
 # This workflow runs on pushes to any branch and on pull requests targeting the main branch.
@@ -9,7 +8,7 @@ on:
   pull_request:
     branches: [ "main" ]
   pull_request_target:
-    types: [opened, synchronize, reopened]
+    types: [ opened, synchronize, reopened ]
 
 jobs:
   # This job runs on push and PR to check for basic correctness
@@ -64,14 +63,13 @@ jobs:
           echo "$diff_output" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: Authenticate to Google Cloud  
+      - name: Authenticate to Google Cloud
         id: auth
         uses: google-github-actions/auth@v2
         with:
           # Add your Workload Identity Federation credentials here
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-          command: gcloud --version
 
       - name: Call Gemini to Review PR
         id: gemini_review
@@ -96,7 +94,7 @@ jobs:
                     "parts": [ { "text": $prompt } ]
                   }
                 ],
-                "generation_config": {  
+                "generation_config": {
                   "temperature": 0.2,
                   "top_p": 0.95,
                   "top_k": 40
