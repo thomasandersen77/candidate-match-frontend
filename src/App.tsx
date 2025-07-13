@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
+import { Container, Typography, Button } from '@mui/material';
+
 
 function App() {
     const [message, setMessage] = useState('Loading...');
@@ -21,12 +23,17 @@ function App() {
     }, []);
 
     return (
-        <div className="App">
-            <h1>Candidate Match Frontend</h1>
-            <p>
-                Status from backend: <strong>{message}</strong>
-            </p>
-        </div>
+        <Container maxWidth="sm">
+            <Typography variant="h4" component="h1" gutterBottom>
+                Welcome to Your App
+            </Typography>
+            <Typography variant="body1" gutterBottom>
+                {message}
+            </Typography>
+            <Button variant="contained" color="primary">
+                Click me
+            </Button>
+        </Container>
     );
 }
 
