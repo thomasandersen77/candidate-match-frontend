@@ -35,74 +35,69 @@ jobs:
       - name: Build application
         run: npm run build
 
-  # This job runs ONLY on pull requests to provide an AI code review
-  gemini-pull-request-review:
-    name: Gemini PR Review
-    runs-on: ubuntu-latest
-    # Run this job only on pull requests, but not from dependabot
-    if: github.event_name == 'pull_request_target' && github.actor != 'dependabot[bot]'
-    permissions:
-      pull-requests: write # Required to post the review comment
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          # We need to check out the specific PR branch
-          ref: ${{ github.event.pull_request.head.sha }}
-
-      - name: Get PR Diff
-        id: pr_diff
+      # --- Steg 3: Kall Gemini API for kode-review ---
+      - name: Perform Code Review with Gemini
+        if: ${{ success() }}
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          # Fetch the target branch
-          git fetch origin ${{ github.event.pull_request.base.ref }}
-          # Get the diff
-          diff_output=$(git diff origin/${{ github.event.pull_request.base.ref }} ${{ github.event.pull_request.head.sha }})
-          # Escape for JSON and set as output
-          echo "diff<<EOF" >> $GITHUB_OUTPUT
-          echo "$diff_output" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          PROMPT_TEMPLATE=$(cat .github/prompts/pr_review_prompt.txt)
+          CODE_DIFF=$(git diff origin/main...HEAD)
+          
+          # Bygg payload på en sikker måte
+          FULL_PROMPT="${PROMPT_TEMPLATE//\{diff\}/$CODE_DIFF}"
+          JSON_PAYLOAD=$(jq -n --arg text_content "$FULL_PROMPT" \
+            '{contents: [{parts: [{text: $text_content}]}]}')
 
-      - name: Authenticate to Google Cloud
-        id: auth
-        uses: google-github-actions/auth@v2
+          # Logikk for å prøve på nytt (retry)
+          MAX_ATTEMPTS=3
+          RETRY_DELAY=5 # Sekunder
+          for ((i=1; i<=MAX_ATTEMPTS; i++)); do
+            echo "::notice::Forsøk $i av $MAX_ATTEMPTS på å kalle Gemini API..."
+          
+            # Bruk -w for å få http-status og body separat
+            HTTP_RESPONSE=$(curl -s -w "%{http_code}" -X POST \
+              "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=$GEMINI_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "$JSON_PAYLOAD")
+          
+            HTTP_STATUS_CODE=${HTTP_RESPONSE: -3}
+            GEMINI_RESPONSE=${HTTP_RESPONSE:0:${#HTTP_RESPONSE}-3}
+          
+            if [ "$HTTP_STATUS_CODE" -eq 200 ]; then
+              echo "::notice::Suksess fra Gemini API."
+              break # Gå ut av loopen ved suksess
+            elif [ "$i" -lt "$MAX_ATTEMPTS" ]; then
+              echo "::warning::Mottok HTTP status $HTTP_STATUS_CODE. Prøver igjen om $RETRY_DELAY sekunder..."
+              echo "API-respons: $GEMINI_RESPONSE"
+              sleep $RETRY_DELAY
+            else
+              echo "::error::Feil fra Gemini API etter $MAX_ATTEMPTS forsøk. HTTP status: $HTTP_STATUS_CODE"
+              echo "$GEMINI_RESPONSE"
+              exit 1
+            fi
+          done
+
+          # Sjekk for feil i selve JSON-responsen
+          if echo "$GEMINI_RESPONSE" | jq -e '.error' > /dev/null; then
+            echo "::error::Gemini API returnerte en feilmelding:"
+            echo "$GEMINI_RESPONSE"
+            exit 1
+          fi
+
+          echo "$GEMINI_RESPONSE" | jq -r '.candidates[0].content.parts[0].text' > gemini_review.txt
+          echo "Gemini-review lagret i gemini_review.txt"
+      # --- Steg 4: Publiser review som en kommentar på Pull Requesten ---
+      - name: Comment on Pull Request
+        if: ${{ success() && github.event_name == 'pull_request' }}
+        uses: actions/github-script@v6
         with:
-          # Add your Workload Identity Federation credentials here
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-
-      - name: Call Gemini to Review PR
-        id: gemini_review
-        uses: google-github-actions/run-gcloud@v1
-        with:
-          command: |
-            # Read the prompt template from the file
-            PROMPT_TEMPLATE=$(cat pr_review_prompt.txt)
-            # Get the diff from the previous step's output
-            DIFF='${{ steps.pr_diff.outputs.diff }}'
-
-            # Replace the {diff} placeholder with the actual diff content
-            PROMPT="${PROMPT_TEMPLATE//\{diff\}/}"
-            PROMPT+="$DIFF"
-
-            # Use jq to safely construct the JSON payload   for the Gemini API
-            JSON_PAYLOAD=$(jq -n --arg prompt "$PROMPT" \
-              '{
-                "contents": [
-                  {
-                    "role": "user",
-                    "parts": [ { "text": $prompt } ]
-                  }
-                ],
-                "generation_config": {
-                  "temperature": 0.2,
-                  "top_p": 0.95,
-                  "top_k": 40
-                }
-              }')
-
-            # Call the model via gcloud, piping the JSON payload to stdin
-            gcloud ai models predict gemini-1.5-flash-001 \
-              --project=${{ secrets.GCP_PROJECT_ID }} \
-              --location=us-central1 \
-              --json-request=- <<< "$JSON_PAYLOAD"
+          script: |
+            const fs = require('fs');
+            const review = fs.readFileSync('gemini_review.txt', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `### 🤖 Gemini Code Review\n\n${review}`
+            });
